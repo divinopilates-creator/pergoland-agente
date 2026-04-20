@@ -29,6 +29,7 @@ def es_lead_calificado(historial: list) -> bool:
     tiene_tipo = any(x in conversacion for x in ["terraza", "estacionamiento", "quincho", "piscina", "cochera"])
     
     return tiene_medidas and tiene_comuna and tiene_tipo
+
     PORT = int(os.getenv("PORT", 8080))
 
 @asynccontextmanager
