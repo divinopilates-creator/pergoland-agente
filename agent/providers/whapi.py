@@ -18,17 +18,30 @@ class ProveedorWhapi(ProveedorWhatsApp):
         self.url_envio = "https://gate.whapi.cloud/messages/text"
 
     async def parsear_webhook(self, request: Request) -> list[MensajeEntrante]:
-        """Parsea el payload de Whapi.cloud."""
-        body = await request.json()
-        mensajes = []
-        for msg in body.get("messages", []):
-            mensajes.append(MensajeEntrante(
-                telefono=msg.get("chat_id", ""),
-                texto=msg.get("text", {}).get("body", ""),
-                mensaje_id=msg.get("id", ""),
-                es_propio=msg.get("from_me", False),
-            ))
+    """Parsea el payload de Whapi.cloud."""
+    body = await request.json()
+    mensajes = []
+    
+    # Ignorar eventos que no tienen mensajes nuevos
+    if "messages" not in body:
         return mensajes
+        
+    for msg in body.get("messages", []):
+        # Solo procesar mensajes de texto nuevos, no de estado ni sistema
+        if msg.get("type") != "text":
+            continue
+        if msg.get("from_me", False):
+            continue
+        texto = msg.get("text", {}).get("body", "")
+        if not texto:
+            continue
+        mensajes.append(MensajeEntrante(
+            telefono=msg.get("chat_id", ""),
+            texto=texto,
+            mensaje_id=msg.get("id", ""),
+            es_propio=False,
+        ))
+    return mensajes
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         """Envía mensaje via Whapi.cloud."""
