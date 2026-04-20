@@ -8,10 +8,18 @@ logger = logging.getLogger("agentkit")
 
 def extraer_nombre(historial: list) -> str:
     for msg in reversed(historial):
-        if msg["role"] == "user":
-            texto = msg["content"]
-            if any(x in texto.lower() for x in ["me llamo", "soy", "mi nombre"]):
-                return texto.strip()
+        if msg["role"] == "assistant":
+            texto = msg["content"].lower()
+            # Buscar cuando Matías confirma el nombre
+            if "listo" in texto or "perfecto" in texto or "gracias" in texto:
+                # El mensaje anterior del usuario probablemente tiene el nombre
+                idx = historial.index(msg)
+                if idx > 0 and historial[idx-1]["role"] == "user":
+                    nombre = historial[idx-1]["content"].strip()
+                    # Limpiar si viene con teléfono
+                    nombre = nombre.split("y")[0].split(",")[0].strip()
+                    if len(nombre) < 40:
+                        return nombre
     return "Lead WhatsApp"
 
 def extraer_telefono(telefono: str) -> str:
