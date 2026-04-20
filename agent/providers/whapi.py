@@ -1,6 +1,4 @@
-# agent/providers/whapi.py — Adaptador para Whapi.cloud
-# Generado por AgentKit
-
+﻿# agent/providers/whapi.py
 import os
 import logging
 import httpx
@@ -9,44 +7,45 @@ from agent.providers.base import ProveedorWhatsApp, MensajeEntrante
 
 logger = logging.getLogger("agentkit")
 
-
 class ProveedorWhapi(ProveedorWhatsApp):
-    """Proveedor de WhatsApp usando Whapi.cloud (REST API simple)."""
+    """Proveedor de WhatsApp usando Whapi.cloud."""
 
     def __init__(self):
         self.token = os.getenv("WHAPI_TOKEN")
         self.url_envio = "https://gate.whapi.cloud/messages/text"
 
     async def parsear_webhook(self, request: Request) -> list[MensajeEntrante]:
-    """Parsea el payload de Whapi.cloud."""
-    body = await request.json()
-    mensajes = []
-    
-    # Ignorar eventos que no tienen mensajes nuevos
-    if "messages" not in body:
+        """Parsea el payload de Whapi.cloud."""
+        body = await request.json()
+        mensajes = []
+
+        if "messages" not in body:
+            return mensajes
+
+        for msg in body.get("messages", []):
+            if msg.get("type") != "text":
+                continue
+            if msg.get("from_me", False):
+                continue
+            texto = msg.get("text", {}).get("body", "")
+            if not texto:
+                continue
+            mensajes.append(MensajeEntrante(
+                telefono=msg.get("chat_id", ""),
+                texto=texto,
+                mensaje_id=msg.get("id", ""),
+                es_propio=False,
+            ))
         return mensajes
-        
-    for msg in body.get("messages", []):
-        # Solo procesar mensajes de texto nuevos, no de estado ni sistema
-        if msg.get("type") != "text":
-            continue
-        if msg.get("from_me", False):
-            continue
-        texto = msg.get("text", {}).get("body", "")
-        if not texto:
-            continue
-        mensajes.append(MensajeEntrante(
-            telefono=msg.get("chat_id", ""),
-            texto=texto,
-            mensaje_id=msg.get("id", ""),
-            es_propio=False,
-        ))
-    return mensajes
+
+    async def validar_webhook(self, request: Request):
+        """Validacion GET del webhook."""
+        return None
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
-        """Envía mensaje via Whapi.cloud."""
+        """Envia mensaje via Whapi.cloud."""
         if not self.token:
-            logger.warning("WHAPI_TOKEN no configurado — mensaje no enviado")
+            logger.warning("WHAPI_TOKEN no configurado - mensaje no enviado")
             return False
         headers = {
             "Authorization": f"Bearer {self.token}",
@@ -59,5 +58,5 @@ class ProveedorWhapi(ProveedorWhatsApp):
                 headers=headers,
             )
             if r.status_code != 200:
-                logger.error(f"Error Whapi: {r.status_code} — {r.text}")
+                logger.error(f"Error Whapi: {r.status_code} - {r.text}")
             return r.status_code == 200
