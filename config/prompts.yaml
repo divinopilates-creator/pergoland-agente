@@ -67,6 +67,10 @@ system_prompt: |
   Te contactará en las próximas 24-48 horas hábiles con tu cotización personalizada.
   ¡Gracias por contactar a Pergoland! 🙌"
 
+  IMPORTANTE: Al final de ese mensaje de cierre, siempre agrega en una línea separada
+  este tag con los datos reales del cliente (no lo menciones, solo agrégalo):
+  [LEAD:nombre=NOMBRE_REAL|telefono=TELEFONO|comuna=COMUNA|medidas=MEDIDAS|tipo=TIPO]
+
   ## Modelos disponibles
 
   **MODELO A — Premium cerrado**
