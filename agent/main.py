@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from agent.brain import generar_respuesta
 from agent.memory import inicializar_db, guardar_mensaje, obtener_historial
 from agent.providers import obtener_proveedor
-
+from agent.crm import enviar_lead_crm
 load_dotenv()
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -20,8 +20,16 @@ logging.basicConfig(level=log_level)
 logger = logging.getLogger("agentkit")
 
 proveedor = obtener_proveedor()
-PORT = int(os.getenv("PORT", 8000))
-
+def es_lead_calificado(historial: list) -> bool:
+    """Detecta si el historial tiene los 3 datos mínimos para calificar."""
+    conversacion = " ".join([m["content"].lower() for m in historial])
+    
+    tiene_medidas = any(x in conversacion for x in ["x", "metro", "m2", "m²", "largo", "ancho", "medida"])
+    tiene_comuna = any(x in conversacion for x in ["comuna", "santiago", "providencia", "las condes", "vitacura", "ñuñoa", "maipú", "rancagua", "valparaíso", "viña"])
+    tiene_tipo = any(x in conversacion for x in ["terraza", "estacionamiento", "quincho", "piscina", "cochera"])
+    
+    return tiene_medidas and tiene_comuna and tiene_tipo
+    PORT = int(os.getenv("PORT", 8080))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -77,8 +85,12 @@ async def webhook_handler(request: Request):
 
             await guardar_mensaje(msg.telefono, "user", msg.texto)
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
-
             await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            # Verificar si el lead está calificado y enviarlo al CRM
+            historial_actualizado = await obtener_historial(msg.telefono)
+            if es_lead_calificado(historial_actualizado):
+            await enviar_lead_crm(msg.telefono, msg.nombre if hasattr(msg, 'nombre') else "", historial_actualizado)
 
             logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
 
