@@ -35,6 +35,7 @@ class ProveedorWhapi(ProveedorWhatsApp):
                 texto=texto,
                 mensaje_id=msg.get("id", ""),
                 es_propio=False,
+                nombre=msg.get("from_name", ""),
             ))
         return mensajes
 
