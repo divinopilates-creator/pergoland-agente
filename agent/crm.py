@@ -17,7 +17,7 @@ def extraer_nombre(historial: list) -> str:
 def extraer_telefono(telefono: str) -> str:
     return telefono.replace("@s.whatsapp.net", "").replace("@c.us", "")
 
-def extraer_notas(historial: list) -> str:
+def extraer_notas(historial: list, telefono: str) -> str:
     datos = []
     conversacion = " ".join([m["content"] for m in historial if m["role"] == "user"])
     medidas = re.findall(r'\d+\s*[xX]\s*\d+', conversacion)
@@ -34,7 +34,7 @@ def extraer_notas(historial: list) -> str:
         if comuna in conversacion.lower():
             datos.append(f"Comuna: {comuna.title()}")
             break
-    datos.append(f"WhatsApp: {extraer_telefono(telefono if isinstance(telefono, str) else '')}")
+    datos.append(f"WhatsApp: {extraer_telefono(telefono)}")
     return " | ".join(datos) if datos else "Lead desde WhatsApp"
 
 async def enviar_lead_crm(telefono: str, nombre: str, historial: list) -> bool:
@@ -47,7 +47,7 @@ async def enviar_lead_crm(telefono: str, nombre: str, historial: list) -> bool:
         "name": nombre or extraer_nombre(historial) or f"Lead {telefono_limpio}",
         "phone": telefono_limpio,
         "source": "WhatsApp - Matias",
-        "notes": extraer_notas(historial)
+        "notes": extraer_notas(historial, telefono)
     }
     try:
         async with httpx.AsyncClient() as client:
