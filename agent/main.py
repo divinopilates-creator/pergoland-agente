@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 
 from agent.brain import generar_respuesta
-from agent.memory import inicializar_db, guardar_mensaje, obtener_historial
+from agent.memory import inicializar_db, guardar_mensaje, obtener_historial, obtener_historial_completo
 from agent.providers import obtener_proveedor
 from agent.crm import enviar_lead_crm
 
@@ -45,6 +45,11 @@ app = FastAPI(
 @app.get("/")
 async def health_check():
     return {"status": "ok", "service": "agentkit", "agente": "Matias", "negocio": "PERGOLAND CHILE SPA"}
+
+@app.get("/conversations/{telefono}")
+async def get_conversation(telefono: str):
+    historial = await obtener_historial_completo(telefono)
+    return {"messages": historial, "phone": telefono}
 
 @app.get("/webhook")
 async def webhook_verificacion(request: Request):

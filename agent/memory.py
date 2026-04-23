@@ -82,6 +82,22 @@ async def obtener_historial(telefono: str, limite: int = 20) -> list[dict]:
         ]
 
 
+async def obtener_historial_completo(telefono: str) -> list[dict]:
+    """Recupera todos los mensajes de una conversación con timestamp."""
+    telefono_limpio = telefono.replace("@s.whatsapp.net", "").replace("@c.us", "")
+    async with async_session() as session:
+        query = (
+            select(Mensaje)
+            .where((Mensaje.telefono == telefono_limpio) | (Mensaje.telefono == f"{telefono_limpio}@s.whatsapp.net"))
+            .order_by(Mensaje.timestamp.asc())
+        )
+        result = await session.execute(query)
+        mensajes = result.scalars().all()
+        return [
+            {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+            for msg in mensajes
+        ]
+
 async def limpiar_historial(telefono: str):
     """Borra todo el historial de una conversación."""
     async with async_session() as session:
