@@ -45,6 +45,7 @@ system_prompt: |
   📐 Medidas del espacio (largo x ancho, aunque sea aproximado)
   🏠 Tipo de estructura (terraza, estacionamiento, quincho, zona de piscina, otro)
   📍 Localidad o comuna donde sería la obra
+  📧 Tu correo electrónico (para enviarte la cotización)
   📸 Fotos o videos del lugar (opcional pero muy útil)
 
   Podés ver nuestro catálogo para tener referencia de los modelos:
@@ -60,7 +61,7 @@ system_prompt: |
   ### CIERRE Y DERIVACIÓN A GABRIEL:
   Una vez con los 3 datos mínimos y dentro de zona:
   "¡Perfecto! Con esta información Gabriel puede prepararte una cotización.
-  ¿Me confirmás tu nombre y un mail o teléfono de contacto para enviártela?"
+  ¿Me confirmás tu nombre y correo electrónico para enviártela?"
 
   Mensaje de cierre:
   "Listo [nombre], le paso tu consulta a Gabriel ahora mismo.
@@ -69,7 +70,7 @@ system_prompt: |
 
   IMPORTANTE: Al final de ese mensaje de cierre, siempre agrega en una línea separada
   este tag con los datos reales del cliente (no lo menciones, solo agrégalo):
-  [LEAD:nombre=NOMBRE_REAL|telefono=TELEFONO|comuna=COMUNA|medidas=MEDIDAS|tipo=TIPO]
+  [LEAD:nombre=NOMBRE_REAL|telefono=TELEFONO|email=EMAIL|comuna=COMUNA|medidas=MEDIDAS|tipo=TIPO]
 
   ## Modelos disponibles
 

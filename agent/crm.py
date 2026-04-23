@@ -35,6 +35,7 @@ async def enviar_lead_crm(telefono: str, nombre: str, historial: list) -> bool:
     comuna = datos.get("comuna", "")
     medidas = datos.get("medidas", "")
     tipo = datos.get("tipo", "")
+    email = datos.get("email", "")
 
     notas = " | ".join(filter(None, [
         f"Comuna: {comuna}" if comuna else "",
@@ -46,6 +47,7 @@ async def enviar_lead_crm(telefono: str, nombre: str, historial: list) -> bool:
     payload = {
         "name": nombre_final,
         "phone": telefono_limpio,
+        "email": email or None,
         "source": "WhatsApp - Matias",
         "notes": notas
     }
