@@ -22,6 +22,54 @@ def extraer_datos_tag(historial: list) -> dict:
                 return datos
     return {}
 
+def extraer_datos_tag_madera(historial: list) -> dict:
+    for msg in reversed(historial):
+        if msg["role"] == "assistant":
+            match = re.search(r'\[LEAD_MADERA:([^\]]+)\]', msg["content"])
+            if match:
+                datos = {}
+                for par in match.group(1).split("|"):
+                    if "=" in par:
+                        clave, valor = par.split("=", 1)
+                        datos[clave.strip()] = valor.strip()
+                return datos
+    return {}
+
+async def enviar_lead_distribuidor_crm(telefono: str, historial: list) -> bool:
+    crm_url = os.getenv("CRM_WEBHOOK_URL")
+    if not crm_url:
+        return False
+
+    datos = extraer_datos_tag_madera(historial)
+    if not datos:
+        return False
+
+    nombre = datos.get("nombre", "")
+    apellido = datos.get("apellido", "")
+    telefono_cliente = datos.get("telefono") or extraer_telefono(telefono)
+    nombre_completo = f"{nombre} {apellido}".strip() or f"Lead Madera {telefono_cliente}"
+
+    payload = {
+        "name": nombre_completo,
+        "phone": telefono_cliente,
+        "source": "Distribuidor - Madera",
+        "notes": "Cliente interesado en pérgolas de madera — derivar a distribuidor autorizado",
+        "type": "distribuidor",
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(crm_url, json=payload, timeout=10)
+            if r.status_code in [200, 201]:
+                logger.info(f"Lead distribuidor enviado al CRM: {telefono_cliente}")
+                return True
+            else:
+                logger.error(f"Error CRM distribuidor: {r.status_code} - {r.text}")
+                return False
+    except Exception as e:
+        logger.error(f"Error enviando lead distribuidor: {e}")
+        return False
+
 async def enviar_lead_crm(telefono: str, nombre: str, historial: list) -> bool:
     crm_url = os.getenv("CRM_WEBHOOK_URL")
     if not crm_url:

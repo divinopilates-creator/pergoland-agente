@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from agent.brain import generar_respuesta
 from agent.memory import inicializar_db, guardar_mensaje, obtener_historial, obtener_historial_completo
 from agent.providers import obtener_proveedor
-from agent.crm import enviar_lead_crm
+from agent.crm import enviar_lead_crm, enviar_lead_distribuidor_crm, extraer_datos_tag_madera
 
 load_dotenv()
 
@@ -78,6 +78,8 @@ async def webhook_handler(request: Request):
                     msg.nombre if hasattr(msg, "nombre") else "",
                     historial_actualizado
                 )
+            elif extraer_datos_tag_madera(historial_actualizado):
+                await enviar_lead_distribuidor_crm(msg.telefono, historial_actualizado)
             logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
         return {"status": "ok"}
     except Exception as e:
