@@ -53,10 +53,13 @@ async def get_conversation(telefono: str):
 
 @app.get("/webhook")
 async def webhook_verificacion(request: Request):
+    from starlette.responses import Response
     resultado = await proveedor.validar_webhook(request)
-    if resultado is not None:
-        return PlainTextResponse(str(resultado))
-    return {"status": "ok"}
+    if resultado is None:
+        return {"status": "ok"}
+    if isinstance(resultado, Response):
+        return resultado
+    return PlainTextResponse(str(resultado))
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
