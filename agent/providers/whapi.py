@@ -40,7 +40,7 @@ class ProveedorWhapi(ProveedorWhatsApp):
         return mensajes
 
     async def validar_webhook(self, request: Request):
-          """Validar webhook"""
+    """Validacion GET del webhook."""
     from fastapi.responses import JSONResponse
     return JSONResponse({"status": "ok"})
 
