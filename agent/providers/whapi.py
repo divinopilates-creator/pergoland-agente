@@ -1,5 +1,4 @@
-﻿# agent/providers/whapi.py
-import os
+﻿import os
 import logging
 import httpx
 from fastapi import Request
@@ -15,13 +14,10 @@ class ProveedorWhapi(ProveedorWhatsApp):
         self.url_envio = "https://gate.whapi.cloud/messages/text"
 
     async def parsear_webhook(self, request: Request) -> list[MensajeEntrante]:
-        """Parsea el payload de Whapi.cloud."""
         body = await request.json()
         mensajes = []
-
         if "messages" not in body:
             return mensajes
-
         for msg in body.get("messages", []):
             if msg.get("type") != "text":
                 continue
@@ -40,14 +36,11 @@ class ProveedorWhapi(ProveedorWhatsApp):
         return mensajes
 
     async def validar_webhook(self, request: Request):
-    """Validacion GET del webhook."""
-    from fastapi.responses import JSONResponse
-    return JSONResponse({"status": "ok"})
+        return None
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
-        """Envia mensaje via Whapi.cloud."""
         if not self.token:
-            logger.warning("WHAPI_TOKEN no configurado - mensaje no enviado")
+            logger.warning("WHAPI_TOKEN no configurado")
             return False
         headers = {
             "Authorization": f"Bearer {self.token}",
