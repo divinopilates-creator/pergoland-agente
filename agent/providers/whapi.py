@@ -21,8 +21,6 @@ class ProveedorWhapi(ProveedorWhatsApp):
         for msg in body.get("messages", []):
             if msg.get("type") != "text":
                 continue
-            if msg.get("from_me", False):
-                continue
             texto = msg.get("text", {}).get("body", "")
             if not texto:
                 continue
@@ -30,7 +28,7 @@ class ProveedorWhapi(ProveedorWhatsApp):
                 telefono=msg.get("chat_id", ""),
                 texto=texto,
                 mensaje_id=msg.get("id", ""),
-                es_propio=False,
+                es_propio=msg.get("from_me", False),
                 nombre=msg.get("from_name", ""),
             ))
         return mensajes
