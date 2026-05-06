@@ -111,16 +111,22 @@ async def webhook_handler(request: Request):
                 logger.info(f"Handoff activado para {msg.telefono} - Matias pausado")
                 continue
 
-            # 2. Ignorar mensajes propios que no son stop matias
+            # 2. Detectar "start matias" para reanudar manualmente
+            if await es_comando_start(texto):
+                await reanudar_contacto(msg.telefono)
+                logger.info(f"Matías reanudado manualmente para {msg.telefono}")
+                continue
+
+            # 3. Ignorar mensajes propios que no son stop matias
             if msg.es_propio:
                 continue
 
-            # 3. Si esta pausado - no responder (Gabriel esta atendiendo)
+            # 4. Si esta pausado - no responder (Gabriel esta atendiendo)
             if await esta_pausado(msg.telefono):
                 logger.info(f"Mensaje de {msg.telefono} ignorado - Matias pausado (Gabriel atendiendo)")
                 continue
 
-            # 4. Flujo normal - Matias responde
+            # 5. Flujo normal - Matias responde
             logger.info(f"Mensaje de {msg.telefono}: {texto}")
 
             historial = await obtener_historial(msg.telefono)
