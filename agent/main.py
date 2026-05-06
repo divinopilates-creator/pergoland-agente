@@ -106,6 +106,11 @@ async def webhook_handler(request: Request):
             if msg.es_propio:
                 continue
 
+            # Si está pausado y el cliente responde → reanudar
+            if await esta_pausado(msg.telefono):
+                await reanudar_contacto(msg.telefono)
+                logger.info(f"Cliente {msg.telefono} respondió — Matías reanudado")
+
             logger.info(f"Mensaje de {msg.telefono}: {texto}")
 
             # ── Flujo normal ──────────────────────────────────
