@@ -15,7 +15,7 @@ from agent.crm import (
 )
 from agent.handoff import (
     inicializar_handoff_db, pausar_contacto, reanudar_contacto,
-    esta_pausado, es_comando_stop, scheduler_recordatorios
+    esta_pausado, es_comando_stop, es_comando_start, scheduler_recordatorios
 )
 
 load_dotenv()

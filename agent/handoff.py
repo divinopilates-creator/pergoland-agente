@@ -90,6 +90,14 @@ async def es_comando_stop(texto: str) -> bool:
     texto_lower = texto.strip().lower()
     return texto_lower in ["stop matias", "stop matías", "parar matias", "parar matías"]
 
+async def es_comando_start(texto: str) -> bool:
+    """Detecta si el mensaje es el comando de reanudar."""
+    texto_lower = texto.strip().lower()
+    return any(cmd in texto_lower for cmd in [
+        "start matias", "start matías",
+        "iniciar matias", "activar matias",
+        "start"
+    ])
 
 # ── Scheduler de recordatorios ────────────────────────────────
 async def scheduler_recordatorios(proveedor):
