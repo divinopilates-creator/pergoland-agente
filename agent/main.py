@@ -1,4 +1,4 @@
-# agent/main.py — AgentKit Pergoland Chile con handoff humano
+# agent/main.py - AgentKit Pergoland Chile con handoff humano
 import os
 import asyncio
 import logging
@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 from agent.brain import generar_respuesta
 from agent.memory import inicializar_db, guardar_mensaje, obtener_historial, obtener_historial_completo
 from agent.providers import obtener_proveedor
-from agent.crm import enviar_lead_crm, enviar_lead_distribuidor_crm, extraer_datos_tag_madera
+from agent.crm import (
+    enviar_lead_crm, enviar_lead_distribuidor_crm,
+    extraer_datos_tag_madera, enviar_contacto_incompleto_crm
+)
 from agent.handoff import (
     inicializar_handoff_db, pausar_contacto, reanudar_contacto,
     esta_pausado, es_comando_stop, scheduler_recordatorios
@@ -34,6 +37,14 @@ def es_lead_calificado(historial: list) -> bool:
     return tiene_medidas and tiene_comuna and tiene_tipo
 
 
+def tiene_tag_lead(historial: list) -> bool:
+    """Verifica si Matías ya generó el tag [LEAD:...] en la conversación."""
+    for msg in reversed(historial):
+        if msg["role"] == "assistant" and "[LEAD:" in msg["content"]:
+            return True
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await inicializar_db()
@@ -42,13 +53,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"Servidor AgentKit corriendo en puerto {PORT}")
     logger.info(f"Proveedor de WhatsApp: {proveedor.__class__.__name__}")
 
-    # Iniciar scheduler de recordatorios en background
     task = asyncio.create_task(scheduler_recordatorios(proveedor))
     logger.info("Scheduler de recordatorios iniciado")
 
     yield
 
-    # Cancelar scheduler al apagar
     task.cancel()
     try:
         await task
@@ -58,7 +67,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AgentKit - Matias de PERGOLAND CHILE SPA",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan
 )
 
@@ -96,24 +105,24 @@ async def webhook_handler(request: Request):
 
             texto = msg.texto.strip()
 
-            # Detectar comando "stop matias" desde cualquier lado
+            # 1. Detectar "stop matias" desde cualquier numero
             if await es_comando_stop(texto):
                 await pausar_contacto(msg.telefono)
-                logger.info(f"Handoff activado para {msg.telefono} — Matías pausado")
+                logger.info(f"Handoff activado para {msg.telefono} - Matias pausado")
                 continue
 
-            # Ignorar mensajes propios que no son stop matias
+            # 2. Ignorar mensajes propios que no son stop matias
             if msg.es_propio:
                 continue
 
-            # Si está pausado y el cliente responde → reanudar
+            # 3. Si esta pausado - no responder (Gabriel esta atendiendo)
             if await esta_pausado(msg.telefono):
-                await reanudar_contacto(msg.telefono)
-                logger.info(f"Cliente {msg.telefono} respondió — Matías reanudado")
+                logger.info(f"Mensaje de {msg.telefono} ignorado - Matias pausado (Gabriel atendiendo)")
+                continue
 
+            # 4. Flujo normal - Matias responde
             logger.info(f"Mensaje de {msg.telefono}: {texto}")
 
-            # ── Flujo normal ──────────────────────────────────
             historial = await obtener_historial(msg.telefono)
             respuesta = await generar_respuesta(texto, historial)
             await guardar_mensaje(msg.telefono, "user", texto)
@@ -121,7 +130,9 @@ async def webhook_handler(request: Request):
             await proveedor.enviar_mensaje(msg.telefono, respuesta)
 
             historial_actualizado = await obtener_historial(msg.telefono)
-            if es_lead_calificado(historial_actualizado):
+
+            # 5. Verificar si es lead calificado (solo si tiene el tag LEAD)
+            if tiene_tag_lead(historial_actualizado):
                 await enviar_lead_crm(
                     msg.telefono,
                     msg.nombre if hasattr(msg, "nombre") else "",
@@ -129,6 +140,13 @@ async def webhook_handler(request: Request):
                 )
             elif extraer_datos_tag_madera(historial_actualizado):
                 await enviar_lead_distribuidor_crm(msg.telefono, historial_actualizado)
+            else:
+                # 6. Guardar contacto incompleto para remarketing
+                await enviar_contacto_incompleto_crm(
+                    msg.telefono,
+                    msg.nombre if hasattr(msg, "nombre") else "",
+                    historial_actualizado
+                )
 
             logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
 
