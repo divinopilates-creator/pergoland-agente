@@ -91,23 +91,22 @@ async def webhook_handler(request: Request):
         mensajes = await proveedor.parsear_webhook(request)
 
         for msg in mensajes:
-            if msg.es_propio or not msg.texto:
+            if not msg.texto:
                 continue
 
             texto = msg.texto.strip()
-            logger.info(f"Mensaje de {msg.telefono}: {texto}")
 
-            # ── Detectar comando "stop matias" ────────────────
+            # Detectar comando "stop matias" desde cualquier lado
             if await es_comando_stop(texto):
                 await pausar_contacto(msg.telefono)
                 logger.info(f"Handoff activado para {msg.telefono} — Matías pausado")
-                continue  # No procesar ni responder
+                continue
 
-            # ── Si está pausado → el cliente respondió → reanudar
-            if await esta_pausado(msg.telefono):
-                await reanudar_contacto(msg.telefono)
-                logger.info(f"Cliente {msg.telefono} respondió — Matías reanudado")
-                # Continúa procesando el mensaje normalmente
+            # Ignorar mensajes propios que no son stop matias
+            if msg.es_propio:
+                continue
+
+            logger.info(f"Mensaje de {msg.telefono}: {texto}")
 
             # ── Flujo normal ──────────────────────────────────
             historial = await obtener_historial(msg.telefono)
