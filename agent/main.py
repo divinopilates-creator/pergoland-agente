@@ -29,6 +29,9 @@ logger = logging.getLogger("agentkit")
 
 proveedor = obtener_proveedor()
 
+# Cache de mensajes procesados para evitar duplicados de Whapi
+mensajes_procesados: set[str] = set()
+
 
 def es_lead_calificado(historial: list) -> bool:
     conversacion = " ".join([m["content"].lower() for m in historial])
@@ -67,7 +70,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AgentKit - Matias de PERGOLAND CHILE SPA",
-    version="1.3.0",
+    version="1.4.0",
     lifespan=lifespan
 )
 
@@ -85,10 +88,6 @@ async def get_conversation(telefono: str):
 
 @app.post("/handoff/activar")
 async def activar_handoff(request: Request):
-    """
-    Recibe trigger del CRM cuando cambia etapa.
-    Body: { "telefono": "56912345678", "tipo": "cotizacion" | "visita" }
-    """
     try:
         body = await request.json()
         telefono = body.get("telefono", "").strip()
@@ -97,7 +96,6 @@ async def activar_handoff(request: Request):
         if not telefono or tipo not in ("cotizacion", "visita"):
             return {"status": "error", "message": "telefono y tipo (cotizacion/visita) requeridos"}
 
-        # Normalizar teléfono
         if not telefono.endswith("@s.whatsapp.net"):
             telefono = f"{telefono}@s.whatsapp.net"
 
@@ -131,6 +129,13 @@ async def webhook_handler(request: Request):
                 continue
 
             texto = msg.texto.strip()
+
+            # Ignorar mensajes duplicados (Whapi envía el mismo webhook varias veces)
+            if msg.mensaje_id and msg.mensaje_id in mensajes_procesados:
+                logger.info(f"Mensaje duplicado ignorado: {msg.mensaje_id}")
+                continue
+            if msg.mensaje_id:
+                mensajes_procesados.add(msg.mensaje_id)
 
             # 1. Detectar "stop matias"
             if await es_comando_stop(texto):
