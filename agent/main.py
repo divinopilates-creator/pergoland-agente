@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AgentKit - Matias de PERGOLAND CHILE SPA",
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan
 )
 
@@ -125,11 +125,6 @@ async def webhook_handler(request: Request):
         mensajes = await proveedor.parsear_webhook(request)
 
         for msg in mensajes:
-            if not msg.texto:
-                continue
-
-            texto = msg.texto.strip()
-
             # Ignorar mensajes duplicados (Whapi envía el mismo webhook varias veces)
             if msg.mensaje_id and msg.mensaje_id in mensajes_procesados:
                 logger.info(f"Mensaje duplicado ignorado: {msg.mensaje_id}")
@@ -137,20 +132,64 @@ async def webhook_handler(request: Request):
             if msg.mensaje_id:
                 mensajes_procesados.add(msg.mensaje_id)
 
-            # 1. Detectar "stop matias"
+            # 1. Mensajes propios (from_me=True) — pueden ser:
+            #    a) Eco del propio mensaje que Matías acaba de enviar (Whapi lo
+            #       reenvía como webhook). Hay que ignorarlo sin pausar nada.
+            #    b) Gabriel Varela escribiendo manualmente o enviando un archivo.
+            #       En ese caso se registra como intervención humana Y se pausa
+            #       a Matías automáticamente (igual que "stop matias"). Matías
+            #       solo vuelve a responder si alguien manda "start matias"
+            #       explícitamente.
+            if msg.es_propio:
+                texto_humano = msg.texto.strip() if msg.texto else ""
+
+                # "stop matias" / "start matias" siguen funcionando igual
+                if texto_humano and await es_comando_stop(texto_humano):
+                    await pausar_contacto(msg.telefono)
+                    logger.info(f"Handoff activado para {msg.telefono} - Matias pausado (orden manual)")
+                    continue
+                if texto_humano and await es_comando_start(texto_humano):
+                    await reanudar_contacto(msg.telefono)
+                    logger.info(f"Matias reanudado para {msg.telefono} (orden manual)")
+                    continue
+
+                # Detectar si es el eco del propio bot: comparamos contra la última
+                # respuesta que Matías generó y guardó para este contacto.
+                historial_previo = await obtener_historial(msg.telefono, limite=5)
+                ultima_respuesta_bot = ""
+                for m in reversed(historial_previo):
+                    if m["role"] == "assistant" and not m["content"].startswith("[INTERVENCION_HUMANA]"):
+                        ultima_respuesta_bot = m["content"].strip()
+                        break
+
+                es_eco_del_bot = bool(texto_humano) and texto_humano == ultima_respuesta_bot
+
+                if es_eco_del_bot:
+                    logger.info(f"Eco del propio mensaje de Matias ignorado para {msg.telefono}")
+                    continue
+
+                # Intervención humana real: registrar Y pausar automáticamente
+                contenido_log = texto_humano if texto_humano else "Se envió un archivo"
+                await guardar_mensaje(msg.telefono, "assistant", f"[INTERVENCION_HUMANA] {contenido_log}")
+                await pausar_contacto(msg.telefono)
+                logger.info(f"Intervención humana registrada y Matias pausado para {msg.telefono}: {contenido_log}")
+                continue
+
+            if not msg.texto:
+                continue
+
+            texto = msg.texto.strip()
+
+            # 2. Detectar "stop matias" (del cliente, caso raro pero por si acaso)
             if await es_comando_stop(texto):
                 await pausar_contacto(msg.telefono)
                 logger.info(f"Handoff activado para {msg.telefono} - Matias pausado")
                 continue
 
-            # 2. Detectar "start matias"
+            # 3. Detectar "start matias"
             if await es_comando_start(texto):
                 await reanudar_contacto(msg.telefono)
-                logger.info(f"Matías reanudado manualmente para {msg.telefono}")
-                continue
-
-            # 3. Ignorar mensajes propios
-            if msg.es_propio:
+                logger.info(f"Matias reanudado manualmente para {msg.telefono}")
                 continue
 
             # 4. Si está pausado — no responder
