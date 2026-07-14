@@ -32,6 +32,19 @@ proveedor = obtener_proveedor()
 # Cache de mensajes procesados para evitar duplicados de Whapi
 mensajes_procesados: set[str] = set()
 
+# Mensajes automáticos de WhatsApp Business (Meta) que llegan como from_me=True
+# pero NO fueron escritos por Gabriel manualmente — no deben pausar a Matías
+MENSAJES_AUTOMATICOS_META = [
+    "Gracias por contactarte con Pergoland Chile",
+    "Gracias por contactarte con Pergoland Argentina",
+]
+
+
+def es_mensaje_automatico_meta(texto: str) -> bool:
+    if not texto:
+        return False
+    return any(texto.strip().startswith(p) for p in MENSAJES_AUTOMATICOS_META)
+
 
 def es_lead_calificado(historial: list) -> bool:
     conversacion = " ".join([m["content"].lower() for m in historial])
@@ -70,7 +83,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AgentKit - Matias de PERGOLAND CHILE SPA",
-    version="1.5.0",
+    version="1.6.0",
     lifespan=lifespan
 )
 
@@ -135,7 +148,9 @@ async def webhook_handler(request: Request):
             # 1. Mensajes propios (from_me=True) — pueden ser:
             #    a) Eco del propio mensaje que Matías acaba de enviar (Whapi lo
             #       reenvía como webhook). Hay que ignorarlo sin pausar nada.
-            #    b) Gabriel Varela escribiendo manualmente o enviando un archivo.
+            #    b) Mensaje automático de ausencia/saludo de WhatsApp Business
+            #       (Meta) — tampoco fue escrito por Gabriel, no debe pausar.
+            #    c) Gabriel Varela escribiendo manualmente o enviando un archivo.
             #       En ese caso se registra como intervención humana Y se pausa
             #       a Matías automáticamente (igual que "stop matias"). Matías
             #       solo vuelve a responder si alguien manda "start matias"
@@ -163,9 +178,11 @@ async def webhook_handler(request: Request):
                         break
 
                 es_eco_del_bot = bool(texto_humano) and texto_humano == ultima_respuesta_bot
+                es_auto_meta = es_mensaje_automatico_meta(texto_humano)
 
-                if es_eco_del_bot:
-                    logger.info(f"Eco del propio mensaje de Matias ignorado para {msg.telefono}")
+                if es_eco_del_bot or es_auto_meta:
+                    motivo = "eco del bot" if es_eco_del_bot else "mensaje automático WhatsApp Business"
+                    logger.info(f"Mensaje ignorado ({motivo}) para {msg.telefono}")
                     continue
 
                 # Intervención humana real: registrar Y pausar automáticamente
