@@ -107,6 +107,39 @@ async def get_conversation(telefono: str):
     return {"messages": historial, "phone": telefono}
 
 
+@app.get("/debug/db")
+async def debug_db():
+    """Diagnóstico: confirma si el agente está usando Postgres persistente o SQLite efímero."""
+    raw = os.getenv("DATABASE_URL", "")
+    if not raw:
+        return {
+            "database_url_configurada": False,
+            "motor": "sqlite (fallback por defecto)",
+            "persistente": False,
+            "advertencia": "DATABASE_URL no está seteada en este servicio. Se está usando SQLite local — se BORRA en cada redeploy."
+        }
+
+    if raw.startswith("postgresql"):
+        # redactar credenciales antes de mostrar nada
+        try:
+            sin_credenciales = raw.split("@", 1)[1] if "@" in raw else raw
+        except Exception:
+            sin_credenciales = "(no se pudo parsear)"
+        return {
+            "database_url_configurada": True,
+            "motor": "postgresql",
+            "persistente": True,
+            "destino": sin_credenciales,
+        }
+
+    return {
+        "database_url_configurada": True,
+        "motor": raw.split(":")[0],
+        "persistente": False,
+        "advertencia": "DATABASE_URL apunta a algo que no es postgresql — probablemente sqlite. Revisar."
+    }
+
+
 @app.get("/debug/pausados")
 async def debug_pausados():
     """Diagnóstico: lista todos los contactos actualmente pausados (Matías no les responde)."""
