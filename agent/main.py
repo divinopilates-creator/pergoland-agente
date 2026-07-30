@@ -16,7 +16,7 @@ from agent.crm import (
 from agent.handoff import (
     inicializar_handoff_db, pausar_contacto, reanudar_contacto,
     activar_timer, esta_pausado, es_comando_stop, es_comando_start,
-    scheduler_recordatorios, listar_pausados
+    scheduler_recordatorios, listar_pausados, reanudar_masivo
 )
 
 load_dotenv()
@@ -159,6 +159,28 @@ async def debug_reanudar(request: Request):
     await reanudar_contacto(telefono)
     logger.info(f"Matías reanudado manualmente vía /debug/reanudar para {telefono}")
     return {"status": "ok", "telefono": telefono}
+
+
+@app.get("/debug/reanudar-masivo")
+async def debug_reanudar_masivo(confirmar: bool = False, excluir_grupos: bool = True):
+    """
+    Libera a TODOS los contactos pausados de una vez. No envía mensajes.
+    Requiere ?confirmar=true en la URL para ejecutar (si no, solo cuenta cuántos hay).
+    """
+    if not confirmar:
+        pausados = await listar_pausados()
+        return {
+            "ejecutado": False,
+            "total_a_liberar": len(pausados),
+            "mensaje": "Agrega ?confirmar=true a la URL para ejecutar la liberación masiva."
+        }
+    resultado = await reanudar_masivo(excluir_grupos=excluir_grupos)
+    return {
+        "ejecutado": True,
+        "total_liberados": len(resultado["liberados"]),
+        "total_grupos_omitidos": len(resultado["omitidos_grupos"]),
+        "liberados": resultado["liberados"],
+    }
 
 
 @app.post("/handoff/activar")

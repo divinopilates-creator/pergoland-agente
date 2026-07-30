@@ -104,6 +104,56 @@ async def reanudar_contacto(telefono: str):
     logger.info(f"Matías reanudado para {telefono}")
 
 
+async def reanudar_masivo(excluir_grupos: bool = True) -> dict:
+    """
+    Libera a TODOS los contactos pausados de una vez.
+    No envía ningún mensaje — solo borra el estado de pausa.
+    Por defecto excluye grupos (@g.us), ya que Matías no debería
+    responder ahí de todas formas.
+    """
+    async with async_session() as session:
+        result = await session.execute(select(HandoffEstado))
+        estados = result.scalars().all()
+
+        liberados = []
+        omitidos = []
+        for e in estados:
+            if excluir_grupos and e.telefono.endswith("@g.us"):
+                omitidos.append(e.telefono)
+                continue
+            liberados.append(e.telefono)
+            await session.execute(
+                delete(HandoffEstado).where(HandoffEstado.telefono == e.telefono)
+            )
+        await session.commit()
+
+    logger.info(f"Liberación masiva: {len(liberados)} contactos reanudados, {len(omitidos)} grupos omitidos")
+    return {"liberados": liberados, "omitidos_grupos": omitidos}
+
+
+async def reanudar_masivo(excluir_grupos: bool = True) -> list[str]:
+    """
+    Libera a TODOS los contactos pausados de una vez (limpieza tras el bug del
+    filtro de mensajes automáticos). Por defecto excluye grupos (@g.us), ya que
+    Matías no debería responder ahí de todas formas.
+    Devuelve la lista de teléfonos liberados.
+    """
+    async with async_session() as session:
+        result = await session.execute(select(HandoffEstado))
+        estados = result.scalars().all()
+
+        liberados = []
+        for estado in estados:
+            if excluir_grupos and estado.telefono.endswith("@g.us"):
+                continue
+            liberados.append(estado.telefono)
+            await session.delete(estado)
+
+        await session.commit()
+    logger.info(f"Liberación masiva: {len(liberados)} contactos reanudados")
+    return liberados
+
+
 async def esta_pausado(telefono: str) -> bool:
     """Verifica si Matías está pausado para un contacto."""
     async with async_session() as session:
