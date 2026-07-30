@@ -106,26 +106,27 @@ async def reanudar_contacto(telefono: str):
 
 async def reanudar_masivo(excluir_grupos: bool = True) -> dict:
     """
-    Libera a TODOS los contactos pausados de una vez.
+    Libera a TODOS los contactos pausados de una vez, en una sola operación.
     No envía ningún mensaje — solo borra el estado de pausa.
     Por defecto excluye grupos (@g.us), ya que Matías no debería
     responder ahí de todas formas.
     """
     async with async_session() as session:
-        result = await session.execute(select(HandoffEstado))
-        estados = result.scalars().all()
+        result = await session.execute(select(HandoffEstado.telefono))
+        todos = [row[0] for row in result.all()]
 
-        liberados = []
-        omitidos = []
-        for e in estados:
-            if excluir_grupos and e.telefono.endswith("@g.us"):
-                omitidos.append(e.telefono)
-                continue
-            liberados.append(e.telefono)
+        if excluir_grupos:
+            liberados = [t for t in todos if not t.endswith("@g.us")]
+            omitidos = [t for t in todos if t.endswith("@g.us")]
+        else:
+            liberados = todos
+            omitidos = []
+
+        if liberados:
             await session.execute(
-                delete(HandoffEstado).where(HandoffEstado.telefono == e.telefono)
+                delete(HandoffEstado).where(HandoffEstado.telefono.in_(liberados))
             )
-        await session.commit()
+            await session.commit()
 
     logger.info(f"Liberación masiva: {len(liberados)} contactos reanudados, {len(omitidos)} grupos omitidos")
     return {"liberados": liberados, "omitidos_grupos": omitidos}

@@ -174,13 +174,17 @@ async def debug_reanudar_masivo(confirmar: bool = False, excluir_grupos: bool = 
             "total_a_liberar": len(pausados),
             "mensaje": "Agrega ?confirmar=true a la URL para ejecutar la liberación masiva."
         }
-    resultado = await reanudar_masivo(excluir_grupos=excluir_grupos)
-    return {
-        "ejecutado": True,
-        "total_liberados": len(resultado["liberados"]),
-        "total_grupos_omitidos": len(resultado["omitidos_grupos"]),
-        "liberados": resultado["liberados"],
-    }
+    try:
+        resultado = await reanudar_masivo(excluir_grupos=excluir_grupos)
+        return {
+            "ejecutado": True,
+            "total_liberados": len(resultado["liberados"]),
+            "total_grupos_omitidos": len(resultado["omitidos_grupos"]),
+            "liberados": resultado["liberados"],
+        }
+    except Exception as e:
+        logger.error(f"Error en liberación masiva: {e}")
+        return {"ejecutado": False, "error": str(e)}
 
 
 @app.post("/handoff/activar")
