@@ -16,7 +16,7 @@ from agent.crm import (
 from agent.handoff import (
     inicializar_handoff_db, pausar_contacto, reanudar_contacto,
     activar_timer, esta_pausado, es_comando_stop, es_comando_start,
-    scheduler_recordatorios
+    scheduler_recordatorios, listar_pausados
 )
 
 load_dotenv()
@@ -34,9 +34,17 @@ mensajes_procesados: set[str] = set()
 
 # Mensajes automáticos de WhatsApp Business (Meta) que llegan como from_me=True
 # pero NO fueron escritos por Gabriel manualmente — no deben pausar a Matías
+# Mensajes automáticos nativos de la app de WhatsApp Business (llegan como
+# from_me=True vía Whapi) pero NO fueron escritos por Gabriel manualmente —
+# no deben pausar a Matías. Se matchea por inicio de texto porque WhatsApp
+# Business permite variar el wording exacto en configuración.
 MENSAJES_AUTOMATICOS_META = [
     "Gracias por contactarte con Pergoland Chile",
     "Gracias por contactarte con Pergoland Argentina",
+    "Gracias por comunicarte con Pergoland Chile",
+    "Gracias por comunicarte con Pergoland Argentina",
+    "¡Hola! 👋 Gracias por contactar a PERGOLAND",
+    "Hola! Gracias por contactar a PERGOLAND",
 ]
 
 
@@ -97,6 +105,27 @@ async def health_check():
 async def get_conversation(telefono: str):
     historial = await obtener_historial_completo(telefono)
     return {"messages": historial, "phone": telefono}
+
+
+@app.get("/debug/pausados")
+async def debug_pausados():
+    """Diagnóstico: lista todos los contactos actualmente pausados (Matías no les responde)."""
+    pausados = await listar_pausados()
+    return {"total": len(pausados), "pausados": pausados}
+
+
+@app.post("/debug/reanudar")
+async def debug_reanudar(request: Request):
+    """Reanuda a Matías para un contacto pausado, sin pasar por WhatsApp."""
+    body = await request.json()
+    telefono = body.get("telefono", "").strip()
+    if not telefono:
+        return {"status": "error", "message": "telefono requerido"}
+    if not telefono.endswith("@s.whatsapp.net") and not telefono.endswith("@c.us"):
+        telefono = f"{telefono}@s.whatsapp.net"
+    await reanudar_contacto(telefono)
+    logger.info(f"Matías reanudado manualmente vía /debug/reanudar para {telefono}")
+    return {"status": "ok", "telefono": telefono}
 
 
 @app.post("/handoff/activar")
@@ -221,7 +250,14 @@ async def webhook_handler(request: Request):
             respuesta = await generar_respuesta(texto, historial)
             await guardar_mensaje(msg.telefono, "user", texto)
             await guardar_mensaje(msg.telefono, "assistant", respuesta)
-            await proveedor.enviar_mensaje(msg.telefono, respuesta)
+
+            envio_ok = await proveedor.enviar_mensaje(msg.telefono, respuesta)
+            if not envio_ok:
+                logger.error(
+                    f"⚠️ ENVIO FALLIDO a {msg.telefono} — Matías generó la respuesta "
+                    f"pero WhatsApp/Meta la rechazó. Revisar si el número está en la "
+                    f"lista de destinatarios de prueba de Meta (verificación de negocio pendiente)."
+                )
 
             historial_actualizado = await obtener_historial(msg.telefono)
 
