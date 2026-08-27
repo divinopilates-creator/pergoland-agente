@@ -16,7 +16,10 @@ from agent.crm import (
 from agent.handoff import (
     inicializar_handoff_db, pausar_contacto, reanudar_contacto,
     activar_timer, esta_pausado, es_comando_stop, es_comando_start,
-    scheduler_recordatorios, listar_pausados, reanudar_masivo
+    scheduler_recordatorios, listar_pausados, reanudar_masivo,
+    registrar_lead_referencial, enriquecer_lead_referencial,
+    detectar_respuestas_referencial, tiene_lead_referencial_activo,
+    extraer_tag_lead,
 )
 
 load_dotenv()
@@ -326,6 +329,17 @@ async def webhook_handler(request: Request):
                     msg.nombre if hasattr(msg, "nombre") else "",
                     historial_actualizado
                 )
+                # Registrar lead referencial si tiene medidas
+                datos_lead = extraer_tag_lead(historial_actualizado)
+                if datos_lead and datos_lead.get("medidas"):
+                    await registrar_lead_referencial(
+                        telefono=msg.telefono,
+                        nombre=datos_lead.get("nombre", msg.nombre if hasattr(msg, "nombre") else ""),
+                        tipo=datos_lead.get("tipo", ""),
+                        medidas=datos_lead.get("medidas", ""),
+                        comuna=datos_lead.get("comuna", ""),
+                    )
+
             elif extraer_datos_tag_madera(historial_actualizado):
                 await enviar_lead_distribuidor_crm(msg.telefono, historial_actualizado)
             else:
@@ -334,6 +348,18 @@ async def webhook_handler(request: Request):
                     msg.nombre if hasattr(msg, "nombre") else "",
                     historial_actualizado
                 )
+
+            # Detectar respuestas al mensaje referencial (etapa 2)
+            if await tiene_lead_referencial_activo(msg.telefono):
+                respuestas = detectar_respuestas_referencial(texto)
+                if respuestas:
+                    await enriquecer_lead_referencial(
+                        telefono=msg.telefono,
+                        cubierta=respuestas.get("cubierta", ""),
+                        cielo=respuestas.get("cielo", ""),
+                        modelo_interes=respuestas.get("modelo_interes", ""),
+                    )
+                    logger.info(f"Lead {msg.telefono} enriquecido con respuestas: {respuestas}")
 
             logger.info(f"Respuesta a {msg.telefono}: {respuesta}")
 

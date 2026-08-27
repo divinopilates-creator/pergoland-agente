@@ -3,9 +3,11 @@
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
-from sqlalchemy import String, DateTime, Integer, select, delete, text
+from sqlalchemy import String, DateTime, Integer, Float, select, delete, text
 from sqlalchemy.orm import Mapped, mapped_column
+from typing import Optional
 from agent.memory import Base, engine, async_session
 
 logger = logging.getLogger("agentkit")
@@ -26,6 +28,78 @@ MSG_VISITA = (
 )
 
 
+# ── Mensaje referencial 24hs ──────────────────────────────────
+MSG_REFERENCIAL_TEMPLATE = (
+    "Hola {nombre} 👋 Revisamos tu consulta sobre {descripcion}.\n\n"
+    "Un valor referencial para ese proyecto parte desde *{precio}* neto s/IVA.\n\n"
+    "Para prepararte una cotización exacta, te hago 3 preguntas rápidas:\n\n"
+    "1️⃣ ¿Viste nuestro catálogo en pergoland.cl? ¿Algún modelo te llamó la atención?\n"
+    "2️⃣ ¿Prefieres cubierta de *zinc aluminio* 🔲 (opaca, más aislada) "
+    "o *policarbonato* ☀️ (translúcida, no pierde luz)?\n"
+    "3️⃣ ¿El cielo lo imaginas en *madera natural* 🪵 o *WPC* ✨ (composite sin mantenimiento)?\n\n"
+    "¡Con eso te armamos la cotización exacta! 🙌"
+)
+
+# Comunas fuera de RM que aplican viáticos
+COMUNAS_FUERA_RM = [
+    "viña", "valparaiso", "quilpue", "villa alemana", "concon", "quillota",
+    "san antonio", "melipilla", "rancagua", "san fernando", "curico",
+    "talca", "chillan", "concepcion", "temuco", "puerto montt",
+    "calera de limache", "limache", "nogales", "quilicura fuera",
+    "santo domingo", "cartagena", "el quisco", "algarrobo",
+]
+
+
+def es_fuera_rm(comuna: str) -> bool:
+    """Detecta si la comuna está fuera de la RM y requiere viáticos."""
+    if not comuna:
+        return False
+    c = comuna.lower()
+    return any(f in c for f in COMUNAS_FUERA_RM)
+
+
+def calcular_referencial(largo: float, ancho: float, comuna: str = "") -> int:
+    """Calcula precio referencial siempre en Modelo A (conservador)."""
+    area = largo * ancho
+    estructura = area * 103_233
+    cubierta   = area * 20_000
+    cielo      = area * 30_556
+    dias_mo    = max(4, round(area / 4))
+    mo         = dias_mo * 220_000
+    otros      = 350_000
+    fee        = 1_200_000
+    viaticos   = dias_mo * 120_000 if es_fuera_rm(comuna) else 0
+    total      = estructura + cubierta + cielo + mo + otros + fee + viaticos
+    return round(total)
+
+
+def parsear_medidas(medidas_str: str) -> tuple[float, float] | None:
+    """Extrae largo y ancho de strings como '5x5', '6x4', '7 x 3.5'."""
+    if not medidas_str:
+        return None
+    patron = r"(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)"
+    match = re.search(patron, medidas_str.replace(",", "."))
+    if match:
+        return float(match.group(1)), float(match.group(2))
+    return None
+
+
+def extraer_tag_lead(historial: list) -> dict | None:
+    """Extrae los datos del tag [LEAD:...] más reciente del historial."""
+    for msg in reversed(historial):
+        if msg.get("role") == "assistant" and "[LEAD:" in msg.get("content", ""):
+            contenido = msg["content"]
+            match = re.search(r"\[LEAD:([^\]]+)\]", contenido)
+            if match:
+                datos = {}
+                for par in match.group(1).split("|"):
+                    if "=" in par:
+                        k, v = par.split("=", 1)
+                        datos[k.strip()] = v.strip()
+                return datos
+    return None
+
+
 # ── Modelo de base de datos ───────────────────────────────────
 class HandoffEstado(Base):
     """Estado de pausa y timer por contacto."""
@@ -37,6 +111,27 @@ class HandoffEstado(Base):
     tipo_timer: Mapped[str] = mapped_column(String(20), default="stop")
     timer_activado_en: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     recordatorio_enviado: Mapped[str] = mapped_column(String(10), default="pendiente")
+
+
+class LeadReferencial(Base):
+    """Leads con medidas completas — pendientes de mensaje referencial 24hs."""
+    __tablename__ = "lead_referencial"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telefono: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    nombre: Mapped[str] = mapped_column(String(100), default="")
+    tipo: Mapped[str] = mapped_column(String(50), default="")
+    medidas: Mapped[str] = mapped_column(String(20), default="")
+    comuna: Mapped[str] = mapped_column(String(100), default="")
+    largo: Mapped[float] = mapped_column(Float, default=0.0)
+    ancho: Mapped[float] = mapped_column(Float, default=0.0)
+    precio_referencial: Mapped[int] = mapped_column(Integer, default=0)
+    lead_detectado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    estado: Mapped[str] = mapped_column(String(20), default="pendiente")
+    # Datos enriquecidos (etapa 2 — respuestas del cliente)
+    cubierta: Mapped[str] = mapped_column(String(50), default="")
+    cielo: Mapped[str] = mapped_column(String(50), default="")
+    modelo_interes: Mapped[str] = mapped_column(String(50), default="")
 
 
 async def inicializar_handoff_db():
@@ -172,6 +267,123 @@ async def es_comando_start(texto: str) -> bool:
     ])
 
 
+# ── Lead referencial 24hs ─────────────────────────────────────
+async def registrar_lead_referencial(
+    telefono: str,
+    nombre: str,
+    tipo: str,
+    medidas: str,
+    comuna: str,
+) -> bool:
+    """
+    Registra un lead con medidas completas para enviar precio referencial a las 24hs.
+    Retorna True si fue registrado, False si ya existía.
+    """
+    dims = parsear_medidas(medidas)
+    if not dims:
+        logger.warning(f"No se pudo parsear medidas '{medidas}' para {telefono}")
+        return False
+
+    largo, ancho = dims
+    precio = calcular_referencial(largo, ancho, comuna)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(LeadReferencial).where(LeadReferencial.telefono == telefono)
+        )
+        existente = result.scalar_one_or_none()
+        if existente:
+            logger.info(f"Lead referencial ya existe para {telefono} — no se duplica")
+            return False
+
+        session.add(LeadReferencial(
+            telefono=telefono,
+            nombre=nombre,
+            tipo=tipo,
+            medidas=medidas,
+            comuna=comuna,
+            largo=largo,
+            ancho=ancho,
+            precio_referencial=precio,
+            lead_detectado_en=datetime.utcnow(),
+            estado="pendiente",
+        ))
+        await session.commit()
+
+    logger.info(f"Lead referencial registrado para {telefono} — área {largo}×{ancho}m → ${precio:,}")
+    return True
+
+
+async def enriquecer_lead_referencial(
+    telefono: str,
+    cubierta: str = "",
+    cielo: str = "",
+    modelo_interes: str = "",
+) -> bool:
+    """Guarda las respuestas del cliente (etapa 2) en el lead referencial."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(LeadReferencial).where(LeadReferencial.telefono == telefono)
+        )
+        lead = result.scalar_one_or_none()
+        if not lead:
+            return False
+
+        if cubierta:
+            lead.cubierta = cubierta
+        if cielo:
+            lead.cielo = cielo
+        if modelo_interes:
+            lead.modelo_interes = modelo_interes
+        if cubierta or cielo or modelo_interes:
+            lead.estado = "datos_completos"
+
+        await session.commit()
+    logger.info(f"Lead {telefono} enriquecido: cubierta={cubierta} cielo={cielo} modelo={modelo_interes}")
+    return True
+
+
+def detectar_respuestas_referencial(texto: str) -> dict:
+    """
+    Detecta si el cliente está respondiendo las 3 preguntas del mensaje referencial.
+    Retorna dict con cubierta, cielo, modelo_interes detectados.
+    """
+    texto_l = texto.lower()
+    resultado = {}
+
+    # Cubierta
+    if any(p in texto_l for p in ["zinc", "aluminio", "metalica", "opaca", "chapa"]):
+        resultado["cubierta"] = "zinc"
+    elif any(p in texto_l for p in ["policarbonato", "policarb", "translucida", "luz", "transparente"]):
+        resultado["cubierta"] = "policarbonato"
+
+    # Cielo
+    if any(p in texto_l for p in ["madera", "wood", "pino", "natural"]):
+        resultado["cielo"] = "madera"
+    elif any(p in texto_l for p in ["wpc", "composite", "sintetico", "sin mantenimiento"]):
+        resultado["cielo"] = "wpc"
+
+    # Modelo
+    for modelo in ["modelo a", "modelo b", "modelo g", "modelo s", "modelo m"]:
+        if modelo in texto_l:
+            resultado["modelo_interes"] = modelo.upper()
+            break
+
+    return resultado
+
+
+async def tiene_lead_referencial_activo(telefono: str) -> bool:
+    """Verifica si hay un lead referencial en estado referencial_enviado para este teléfono."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(LeadReferencial).where(
+                LeadReferencial.telefono == telefono,
+                LeadReferencial.estado == "referencial_enviado"
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+
 # ── Scheduler de recordatorios ────────────────────────────────
 async def scheduler_recordatorios(proveedor):
     """
@@ -216,6 +428,41 @@ async def scheduler_recordatorios(proveedor):
                             estado.timer_activado_en = None
                             await session.commit()
                             logger.info(f"Recordatorio visita enviado a {estado.telefono} — pausa definitiva")
+
+            # ── Leads referenciales 24hs ──────────────────────
+            try:
+                result_leads = await session.execute(
+                    select(LeadReferencial).where(
+                        LeadReferencial.estado == "pendiente"
+                    )
+                )
+                leads = result_leads.scalars().all()
+
+                for lead in leads:
+                    tiempo_desde_lead = ahora - lead.lead_detectado_en
+                    if tiempo_desde_lead < timedelta(hours=24):
+                        continue
+
+                    # Construir mensaje personalizado
+                    nombre = lead.nombre.split()[0] if lead.nombre else "cliente"
+                    area = lead.largo * lead.ancho
+                    descripcion = f"tu proyecto de {lead.tipo} de {lead.medidas}m en {lead.comuna}" if lead.tipo else f"tu proyecto de {lead.medidas}m en {lead.comuna}"
+                    precio_fmt = f"${lead.precio_referencial:,}".replace(",", ".")
+
+                    mensaje = MSG_REFERENCIAL_TEMPLATE.format(
+                        nombre=nombre.capitalize(),
+                        descripcion=descripcion,
+                        precio=precio_fmt,
+                    )
+
+                    ok = await proveedor.enviar_mensaje(lead.telefono, mensaje)
+                    if ok:
+                        lead.estado = "referencial_enviado"
+                        await session.commit()
+                        logger.info(f"Precio referencial enviado a {lead.telefono} ({lead.medidas}m → {precio_fmt})")
+
+            except Exception as e_ref:
+                logger.error(f"Error procesando leads referenciales: {e_ref}")
 
         except Exception as e:
             logger.error(f"Error en scheduler recordatorios: {e}")
