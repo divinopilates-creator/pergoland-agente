@@ -212,7 +212,72 @@ async def activar_handoff(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/webhook")
+@app.post("/debug/test-lead-referencial")
+async def debug_test_lead_referencial(request: Request):
+    """
+    Simula un lead referencial con timestamp de hace 25hs para probar el envío.
+    Body: { "telefono": "56912345678", "nombre": "Carlos", "tipo": "Quincho",
+            "medidas": "5x5", "comuna": "Viña del Mar" }
+    """
+    from agent.handoff import LeadReferencial
+    from agent.memory import async_session
+    from sqlalchemy import select
+    body = await request.json()
+    telefono = body.get("telefono", "").strip()
+    if not telefono:
+        return {"status": "error", "message": "telefono requerido"}
+    if not telefono.endswith("@s.whatsapp.net"):
+        telefono = f"{telefono}@s.whatsapp.net"
+
+    nombre  = body.get("nombre", "Cliente")
+    tipo    = body.get("tipo", "pergola")
+    medidas = body.get("medidas", "5x5")
+    comuna  = body.get("comuna", "")
+
+    from agent.handoff import parsear_medidas, calcular_referencial
+    dims = parsear_medidas(medidas)
+    if not dims:
+        return {"status": "error", "message": f"No se pudo parsear medidas: {medidas}"}
+
+    largo, ancho = dims
+    precio = calcular_referencial(largo, ancho, comuna)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(LeadReferencial).where(LeadReferencial.telefono == telefono)
+        )
+        existente = result.scalar_one_or_none()
+        if existente:
+            # Actualizar timestamp a hace 25hs para forzar envío
+            existente.lead_detectado_en = datetime.utcnow() - timedelta(hours=25)
+            existente.estado = "pendiente"
+            existente.precio_referencial = precio
+        else:
+            session.add(LeadReferencial(
+                telefono=telefono,
+                nombre=nombre,
+                tipo=tipo,
+                medidas=medidas,
+                comuna=comuna,
+                largo=largo,
+                ancho=ancho,
+                precio_referencial=precio,
+                lead_detectado_en=datetime.utcnow() - timedelta(hours=25),
+                estado="pendiente",
+            ))
+        await session.commit()
+
+    return {
+        "status": "ok",
+        "telefono": telefono,
+        "nombre": nombre,
+        "medidas": medidas,
+        "area": f"{largo}×{ancho}m = {largo*ancho}m²",
+        "precio_referencial": f"${precio:,}".replace(",","."),
+        "estado": "pendiente — el scheduler lo enviará en el próximo ciclo (5 min)",
+    }
+
+
 async def webhook_verificacion(request: Request):
     from starlette.responses import Response
     resultado = await proveedor.validar_webhook(request)
