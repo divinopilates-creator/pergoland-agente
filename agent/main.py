@@ -19,8 +19,10 @@ from agent.handoff import (
     scheduler_recordatorios, listar_pausados, reanudar_masivo,
     registrar_lead_referencial, enriquecer_lead_referencial,
     detectar_respuestas_referencial, tiene_lead_referencial_activo,
-    extraer_tag_lead,
+    extraer_tag_lead, parsear_medidas, calcular_referencial,
 )
+from agent.memory import async_session
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -219,63 +221,64 @@ async def debug_test_lead_referencial(request: Request):
     Body: { "telefono": "56912345678", "nombre": "Carlos", "tipo": "Quincho",
             "medidas": "5x5", "comuna": "Viña del Mar" }
     """
-    from agent.handoff import LeadReferencial
-    from agent.memory import async_session
-    from sqlalchemy import select
-    body = await request.json()
-    telefono = body.get("telefono", "").strip()
-    if not telefono:
-        return {"status": "error", "message": "telefono requerido"}
-    if not telefono.endswith("@s.whatsapp.net"):
-        telefono = f"{telefono}@s.whatsapp.net"
+    try:
+        body = await request.json()
+        telefono = body.get("telefono", "").strip()
+        if not telefono:
+            return {"status": "error", "message": "telefono requerido"}
+        if not telefono.endswith("@s.whatsapp.net"):
+            telefono = f"{telefono}@s.whatsapp.net"
 
-    nombre  = body.get("nombre", "Cliente")
-    tipo    = body.get("tipo", "pergola")
-    medidas = body.get("medidas", "5x5")
-    comuna  = body.get("comuna", "")
+        nombre  = body.get("nombre", "Cliente")
+        tipo    = body.get("tipo", "pergola")
+        medidas = body.get("medidas", "5x5")
+        comuna  = body.get("comuna", "")
 
-    from agent.handoff import parsear_medidas, calcular_referencial
-    dims = parsear_medidas(medidas)
-    if not dims:
-        return {"status": "error", "message": f"No se pudo parsear medidas: {medidas}"}
+        dims = parsear_medidas(medidas)
+        if not dims:
+            return {"status": "error", "message": f"No se pudo parsear medidas: {medidas}"}
 
-    largo, ancho = dims
-    precio = calcular_referencial(largo, ancho, comuna)
+        largo, ancho = dims
+        precio = calcular_referencial(largo, ancho, comuna)
 
-    async with async_session() as session:
-        result = await session.execute(
-            select(LeadReferencial).where(LeadReferencial.telefono == telefono)
-        )
-        existente = result.scalar_one_or_none()
-        if existente:
-            # Actualizar timestamp a hace 25hs para forzar envío
-            existente.lead_detectado_en = datetime.utcnow() - timedelta(hours=25)
-            existente.estado = "pendiente"
-            existente.precio_referencial = precio
-        else:
-            session.add(LeadReferencial(
-                telefono=telefono,
-                nombre=nombre,
-                tipo=tipo,
-                medidas=medidas,
-                comuna=comuna,
-                largo=largo,
-                ancho=ancho,
-                precio_referencial=precio,
-                lead_detectado_en=datetime.utcnow() - timedelta(hours=25),
-                estado="pendiente",
-            ))
-        await session.commit()
+        async with async_session() as session:
+            from sqlalchemy import select as sa_select
+            from agent.handoff import LeadReferencial
+            result = await session.execute(
+                sa_select(LeadReferencial).where(LeadReferencial.telefono == telefono)
+            )
+            existente = result.scalar_one_or_none()
+            if existente:
+                existente.lead_detectado_en = datetime.utcnow() - timedelta(hours=25)
+                existente.estado = "pendiente"
+                existente.precio_referencial = precio
+            else:
+                session.add(LeadReferencial(
+                    telefono=telefono,
+                    nombre=nombre,
+                    tipo=tipo,
+                    medidas=medidas,
+                    comuna=comuna,
+                    largo=largo,
+                    ancho=ancho,
+                    precio_referencial=precio,
+                    lead_detectado_en=datetime.utcnow() - timedelta(hours=25),
+                    estado="pendiente",
+                ))
+            await session.commit()
 
-    return {
-        "status": "ok",
-        "telefono": telefono,
-        "nombre": nombre,
-        "medidas": medidas,
-        "area": f"{largo}×{ancho}m = {largo*ancho}m²",
-        "precio_referencial": f"${precio:,}".replace(",","."),
-        "estado": "pendiente — el scheduler lo enviará en el próximo ciclo (5 min)",
-    }
+        return {
+            "status": "ok",
+            "telefono": telefono,
+            "nombre": nombre,
+            "medidas": medidas,
+            "area": f"{largo}×{ancho}m = {largo*ancho:.0f}m²",
+            "precio_referencial": f"${precio:,}".replace(",", "."),
+            "estado": "pendiente — el scheduler lo enviará en el próximo ciclo (5 min)",
+        }
+    except Exception as e:
+        logger.error(f"Error en test-lead-referencial: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def webhook_verificacion(request: Request):
