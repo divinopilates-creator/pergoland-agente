@@ -12,7 +12,7 @@ from agent.memory import Base, engine, async_session
 
 logger = logging.getLogger("agentkit")
 
-# ── Mensajes automáticos ──────────────────────────────────────
+# ── Mensajes automáticos ──────────────────────────────────────────────
 MSG_COTIZACION = (
     "Hola 👋 Soy Matías de Pergoland Chile. "
     "Quería saber si pudiste revisar la cotización que te enviamos "
@@ -28,7 +28,7 @@ MSG_VISITA = (
 )
 
 
-# ── Mensaje referencial 24hs ──────────────────────────────────
+# ── Mensaje referencial 24hs ──────────────────────────────────────────
 MSG_REFERENCIAL_TEMPLATE = (
     "Hola {nombre} 👋 Revisamos tu consulta sobre {descripcion}.\n\n"
     "Un valor referencial para ese proyecto parte desde *{precio}* neto s/IVA.\n\n"
@@ -51,7 +51,6 @@ COMUNAS_FUERA_RM = [
 
 
 def es_fuera_rm(comuna: str) -> bool:
-    """Detecta si la comuna está fuera de la RM y requiere viáticos."""
     if not comuna:
         return False
     c = comuna.lower()
@@ -59,7 +58,6 @@ def es_fuera_rm(comuna: str) -> bool:
 
 
 def calcular_referencial(largo: float, ancho: float, comuna: str = "") -> int:
-    """Calcula precio referencial siempre en Modelo A (conservador)."""
     area = largo * ancho
     estructura = area * 103_233
     cubierta   = area * 20_000
@@ -74,7 +72,6 @@ def calcular_referencial(largo: float, ancho: float, comuna: str = "") -> int:
 
 
 def parsear_medidas(medidas_str: str) -> tuple[float, float] | None:
-    """Extrae largo y ancho de strings como '5x5', '6x4', '7 x 3.5'."""
     if not medidas_str:
         return None
     patron = r"(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)"
@@ -85,7 +82,6 @@ def parsear_medidas(medidas_str: str) -> tuple[float, float] | None:
 
 
 def extraer_tag_lead(historial: list) -> dict | None:
-    """Extrae los datos del tag [LEAD:...] más reciente del historial."""
     for msg in reversed(historial):
         if msg.get("role") == "assistant" and "[LEAD:" in msg.get("content", ""):
             contenido = msg["content"]
@@ -100,9 +96,8 @@ def extraer_tag_lead(historial: list) -> dict | None:
     return None
 
 
-# ── Modelo de base de datos ───────────────────────────────────
+# ── Modelos de base de datos ──────────────────────────────────────────
 class HandoffEstado(Base):
-    """Estado de pausa y timer por contacto."""
     __tablename__ = "handoff_estado"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -114,7 +109,6 @@ class HandoffEstado(Base):
 
 
 class LeadReferencial(Base):
-    """Leads con medidas completas — pendientes de mensaje referencial 24hs."""
     __tablename__ = "lead_referencial"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -128,26 +122,23 @@ class LeadReferencial(Base):
     precio_referencial: Mapped[int] = mapped_column(Integer, default=0)
     lead_detectado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     estado: Mapped[str] = mapped_column(String(20), default="pendiente")
-    # Datos enriquecidos (etapa 2 — respuestas del cliente)
     cubierta: Mapped[str] = mapped_column(String(50), default="")
     cielo: Mapped[str] = mapped_column(String(50), default="")
     modelo_interes: Mapped[str] = mapped_column(String(50), default="")
 
 
 async def inicializar_handoff_db():
-    """Crea la tabla handoff_estado si no existe."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Tabla handoff_estado inicializada")
 
+
 async def pausar_contacto(telefono: str):
-    """Pausa a Matías SIN activar timer. El timer se activa desde el CRM."""
     async with async_session() as session:
         result = await session.execute(
             select(HandoffEstado).where(HandoffEstado.telefono == telefono)
         )
         existente = result.scalar_one_or_none()
-
         if existente:
             existente.pausado_en = datetime.utcnow()
             existente.tipo_timer = "stop"
@@ -162,17 +153,15 @@ async def pausar_contacto(telefono: str):
                 recordatorio_enviado="pendiente",
             ))
         await session.commit()
-    logger.info(f"Matías pausado para {telefono} — esperando trigger de CRM")
+    logger.info(f"Matías pausado para {telefono}")
 
 
 async def activar_timer(telefono: str, tipo: str):
-    """Activa timer desde el CRM. tipo: 'cotizacion' (72hs) o 'visita' (120hs / 5 días)."""
     async with async_session() as session:
         result = await session.execute(
             select(HandoffEstado).where(HandoffEstado.telefono == telefono)
         )
         existente = result.scalar_one_or_none()
-
         if existente:
             existente.tipo_timer = tipo
             existente.timer_activado_en = datetime.utcnow()
@@ -190,7 +179,6 @@ async def activar_timer(telefono: str, tipo: str):
 
 
 async def reanudar_contacto(telefono: str):
-    """Reanuda a Matías — cancela pausa y timers."""
     async with async_session() as session:
         await session.execute(
             delete(HandoffEstado).where(HandoffEstado.telefono == telefono)
@@ -200,12 +188,6 @@ async def reanudar_contacto(telefono: str):
 
 
 async def reanudar_masivo(excluir_grupos: bool = True) -> dict:
-    """
-    Libera a TODOS los contactos pausados de una vez, en una sola operación.
-    No envía ningún mensaje — solo borra el estado de pausa.
-    Por defecto excluye grupos (@g.us), ya que Matías no debería
-    responder ahí de todas formas.
-    """
     async with async_session() as session:
         result = await session.execute(select(HandoffEstado.telefono))
         todos = [row[0] for row in result.all()]
@@ -228,7 +210,6 @@ async def reanudar_masivo(excluir_grupos: bool = True) -> dict:
 
 
 async def esta_pausado(telefono: str) -> bool:
-    """Verifica si Matías está pausado para un contacto."""
     async with async_session() as session:
         result = await session.execute(
             select(HandoffEstado).where(HandoffEstado.telefono == telefono)
@@ -237,7 +218,6 @@ async def esta_pausado(telefono: str) -> bool:
 
 
 async def listar_pausados() -> list[dict]:
-    """Devuelve todos los contactos actualmente pausados (diagnóstico)."""
     async with async_session() as session:
         result = await session.execute(select(HandoffEstado))
         estados = result.scalars().all()
@@ -267,7 +247,7 @@ async def es_comando_start(texto: str) -> bool:
     ])
 
 
-# ── Lead referencial 24hs ─────────────────────────────────────
+# ── Lead referencial 24hs ─────────────────────────────────────────────
 async def registrar_lead_referencial(
     telefono: str,
     nombre: str,
@@ -275,10 +255,6 @@ async def registrar_lead_referencial(
     medidas: str,
     comuna: str,
 ) -> bool:
-    """
-    Registra un lead con medidas completas para enviar precio referencial a las 24hs.
-    Retorna True si fue registrado, False si ya existía.
-    """
     dims = parsear_medidas(medidas)
     if not dims:
         logger.warning(f"No se pudo parsear medidas '{medidas}' para {telefono}")
@@ -293,7 +269,7 @@ async def registrar_lead_referencial(
         )
         existente = result.scalar_one_or_none()
         if existente:
-            logger.info(f"Lead referencial ya existe para {telefono} — no se duplica")
+            logger.info(f"Lead referencial ya existe para {telefono} – no se duplica")
             return False
 
         session.add(LeadReferencial(
@@ -310,7 +286,7 @@ async def registrar_lead_referencial(
         ))
         await session.commit()
 
-    logger.info(f"Lead referencial registrado para {telefono} — área {largo}×{ancho}m → ${precio:,}")
+    logger.info(f"Lead referencial registrado para {telefono} – área {largo}×{ancho}m → ${precio:,}")
     return True
 
 
@@ -320,7 +296,6 @@ async def enriquecer_lead_referencial(
     cielo: str = "",
     modelo_interes: str = "",
 ) -> bool:
-    """Guarda las respuestas del cliente (etapa 2) en el lead referencial."""
     async with async_session() as session:
         result = await session.execute(
             select(LeadReferencial).where(LeadReferencial.telefono == telefono)
@@ -344,26 +319,19 @@ async def enriquecer_lead_referencial(
 
 
 def detectar_respuestas_referencial(texto: str) -> dict:
-    """
-    Detecta si el cliente está respondiendo las 3 preguntas del mensaje referencial.
-    Retorna dict con cubierta, cielo, modelo_interes detectados.
-    """
     texto_l = texto.lower()
     resultado = {}
 
-    # Cubierta
     if any(p in texto_l for p in ["zinc", "aluminio", "metalica", "opaca", "chapa"]):
         resultado["cubierta"] = "zinc"
     elif any(p in texto_l for p in ["policarbonato", "policarb", "translucida", "luz", "transparente"]):
         resultado["cubierta"] = "policarbonato"
 
-    # Cielo
     if any(p in texto_l for p in ["madera", "wood", "pino", "natural"]):
         resultado["cielo"] = "madera"
     elif any(p in texto_l for p in ["wpc", "composite", "sintetico", "sin mantenimiento"]):
         resultado["cielo"] = "wpc"
 
-    # Modelo
     for modelo in ["modelo a", "modelo b", "modelo g", "modelo s", "modelo m"]:
         if modelo in texto_l:
             resultado["modelo_interes"] = modelo.upper()
@@ -373,7 +341,6 @@ def detectar_respuestas_referencial(texto: str) -> dict:
 
 
 async def tiene_lead_referencial_activo(telefono: str) -> bool:
-    """Verifica si hay un lead referencial en estado referencial_enviado para este teléfono."""
     async with async_session() as session:
         result = await session.execute(
             select(LeadReferencial).where(
@@ -384,12 +351,12 @@ async def tiene_lead_referencial_activo(telefono: str) -> bool:
         return result.scalar_one_or_none() is not None
 
 
-# ── Scheduler de recordatorios ────────────────────────────────
+# ── Scheduler de recordatorios ────────────────────────────────────────
 async def scheduler_recordatorios(proveedor):
     """
     Revisa cada 5 minutos si hay recordatorios pendientes.
-    Solo actúa si el timer fue activado desde el CRM.
-    Envía UN SOLO mensaje y deja en pausa definitiva.
+    CORRECCIÓN: cada bloque DB usa su propio async with para cerrar
+    la sesión correctamente y no agotar el pool de conexiones.
     """
     logger.info("Scheduler de recordatorios iniciado")
     while True:
@@ -397,69 +364,71 @@ async def scheduler_recordatorios(proveedor):
             await asyncio.sleep(300)  # cada 5 minutos
             ahora = datetime.utcnow()
 
-            async with async_session() as session:
-                result = await session.execute(select(HandoffEstado))
-                estados = result.scalars().all()
-
-                for estado in estados:
-                    if not estado.timer_activado_en:
-                        continue
-                    if estado.recordatorio_enviado != "pendiente":
-                        continue
-
-                    tiempo_desde_timer = ahora - estado.timer_activado_en
-
-                    # Cotización → 72hs → 1 solo mensaje → pausa definitiva
-                    if (estado.tipo_timer == "cotizacion" and
-                            tiempo_desde_timer >= timedelta(hours=72)):
-                        ok = await proveedor.enviar_mensaje(estado.telefono, MSG_COTIZACION)
-                        if ok:
-                            estado.recordatorio_enviado = "enviado"
-                            estado.timer_activado_en = None
-                            await session.commit()
-                            logger.info(f"Recordatorio cotización enviado a {estado.telefono} — pausa definitiva")
-
-                    # Visita → 120hs (5 días) → 1 solo mensaje → pausa definitiva
-                    elif (estado.tipo_timer == "visita" and
-                            tiempo_desde_timer >= timedelta(hours=120)):
-                        ok = await proveedor.enviar_mensaje(estado.telefono, MSG_VISITA)
-                        if ok:
-                            estado.recordatorio_enviado = "enviado"
-                            estado.timer_activado_en = None
-                            await session.commit()
-                            logger.info(f"Recordatorio visita enviado a {estado.telefono} — pausa definitiva")
-
-            # ── Leads referenciales 24hs ──────────────────────
+            # ── Bloque 1: recordatorios de handoff (cotización / visita) ──
             try:
-                result_leads = await session.execute(
-                    select(LeadReferencial).where(
-                        LeadReferencial.estado == "pendiente"
+                async with async_session() as session:
+                    result = await session.execute(select(HandoffEstado))
+                    estados = result.scalars().all()
+
+                    for estado in estados:
+                        if not estado.timer_activado_en:
+                            continue
+                        if estado.recordatorio_enviado != "pendiente":
+                            continue
+
+                        tiempo = ahora - estado.timer_activado_en
+
+                        if estado.tipo_timer == "cotizacion" and tiempo >= timedelta(hours=72):
+                            ok = await proveedor.enviar_mensaje(estado.telefono, MSG_COTIZACION)
+                            if ok:
+                                estado.recordatorio_enviado = "enviado"
+                                estado.timer_activado_en = None
+                                await session.commit()
+                                logger.info(f"Recordatorio cotización enviado a {estado.telefono}")
+
+                        elif estado.tipo_timer == "visita" and tiempo >= timedelta(hours=120):
+                            ok = await proveedor.enviar_mensaje(estado.telefono, MSG_VISITA)
+                            if ok:
+                                estado.recordatorio_enviado = "enviado"
+                                estado.timer_activado_en = None
+                                await session.commit()
+                                logger.info(f"Recordatorio visita enviado a {estado.telefono}")
+
+            except Exception as e_handoff:
+                logger.error(f"Error procesando recordatorios handoff: {e_handoff}")
+
+            # ── Bloque 2: leads referenciales 24hs ──
+            try:
+                async with async_session() as session:
+                    result = await session.execute(
+                        select(LeadReferencial).where(LeadReferencial.estado == "pendiente")
                     )
-                )
-                leads = result_leads.scalars().all()
+                    leads = result.scalars().all()
 
-                for lead in leads:
-                    tiempo_desde_lead = ahora - lead.lead_detectado_en
-                    if tiempo_desde_lead < timedelta(hours=24):
-                        continue
+                    for lead in leads:
+                        tiempo_desde_lead = ahora - lead.lead_detectado_en
+                        if tiempo_desde_lead < timedelta(hours=24):
+                            continue
 
-                    # Construir mensaje personalizado
-                    nombre = lead.nombre.split()[0] if lead.nombre else "cliente"
-                    area = lead.largo * lead.ancho
-                    descripcion = f"tu proyecto de {lead.tipo} de {lead.medidas}m en {lead.comuna}" if lead.tipo else f"tu proyecto de {lead.medidas}m en {lead.comuna}"
-                    precio_fmt = f"${lead.precio_referencial:,}".replace(",", ".")
+                        nombre = lead.nombre.split()[0] if lead.nombre else "cliente"
+                        descripcion = (
+                            f"tu proyecto de {lead.tipo} de {lead.medidas}m en {lead.comuna}"
+                            if lead.tipo
+                            else f"tu proyecto de {lead.medidas}m en {lead.comuna}"
+                        )
+                        precio_fmt = f"${lead.precio_referencial:,}".replace(",", ".")
 
-                    mensaje = MSG_REFERENCIAL_TEMPLATE.format(
-                        nombre=nombre.capitalize(),
-                        descripcion=descripcion,
-                        precio=precio_fmt,
-                    )
+                        mensaje = MSG_REFERENCIAL_TEMPLATE.format(
+                            nombre=nombre.capitalize(),
+                            descripcion=descripcion,
+                            precio=precio_fmt,
+                        )
 
-                    ok = await proveedor.enviar_mensaje(lead.telefono, mensaje)
-                    if ok:
-                        lead.estado = "referencial_enviado"
-                        await session.commit()
-                        logger.info(f"Precio referencial enviado a {lead.telefono} ({lead.medidas}m → {precio_fmt})")
+                        ok = await proveedor.enviar_mensaje(lead.telefono, mensaje)
+                        if ok:
+                            lead.estado = "referencial_enviado"
+                            await session.commit()
+                            logger.info(f"Precio referencial enviado a {lead.telefono} ({lead.medidas}m → {precio_fmt})")
 
             except Exception as e_ref:
                 logger.error(f"Error procesando leads referenciales: {e_ref}")
